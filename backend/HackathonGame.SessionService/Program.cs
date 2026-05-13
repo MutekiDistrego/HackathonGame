@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using HackathonGame.SessionService.Data;
 using HackathonGame.SessionService.Hubs;
+using HackathonGame.SessionService.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,6 +11,9 @@ builder.Services.AddDbContext<SessionDbContext>(options =>
 
 // SignalR
 builder.Services.AddSignalR();
+
+// Background timer service
+builder.Services.AddHostedService<TimerBackgroundService>();
 
 // Controllers
 builder.Services.AddControllers()
@@ -40,7 +44,6 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Swagger in development
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -51,11 +54,11 @@ app.UseCors("AllowFrontend");
 app.MapControllers();
 app.MapHub<SessionHub>("/hubs/session");
 
-// Auto-migrate on startup (development only)
+// Auto-migrate on startup
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<SessionDbContext>();
     db.Database.Migrate();
 }
- 
+
 app.Run();

@@ -31,6 +31,13 @@ public class Session
     [Column("round_end_time")]
     public DateTime? RoundEndTime { get; set; }
 
+    /// <summary>
+    /// Момент коли раунд був поставлений на паузу.
+    /// При resume RoundEndTime зсувається вперед на (UtcNow - PausedAt).
+    /// </summary>
+    [Column("paused_at")]
+    public DateTime? PausedAt { get; set; }
+
     [Column("game_end_time")]
     public DateTime? GameEndTime { get; set; }
 

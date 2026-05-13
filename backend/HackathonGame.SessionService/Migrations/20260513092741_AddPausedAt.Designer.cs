@@ -3,6 +3,7 @@ using System;
 using HackathonGame.SessionService.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace HackathonGame.SessionService.Migrations
 {
     [DbContext(typeof(SessionDbContext))]
-    partial class SessionDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260513092741_AddPausedAt")]
+    partial class AddPausedAt
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

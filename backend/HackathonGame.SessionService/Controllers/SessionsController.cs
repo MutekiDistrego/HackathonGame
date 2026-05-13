@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using HackathonGame.SessionService.Data;
 using HackathonGame.SessionService.DTOs;
+using HackathonGame.SessionService.Hubs;
 using HackathonGame.SessionService.Models;
 
 namespace HackathonGame.SessionService.Controllers;
@@ -11,15 +13,19 @@ namespace HackathonGame.SessionService.Controllers;
 public class SessionsController : ControllerBase
 {
     private readonly SessionDbContext _db;
+    private readonly IHubContext<SessionHub> _hub;
 
-    public SessionsController(SessionDbContext db) => _db = db;
+    public SessionsController(SessionDbContext db, IHubContext<SessionHub> hub)
+    {
+        _db = db;
+        _hub = hub;
+    }
 
     // POST /api/sessions
     [HttpPost]
     public async Task<ActionResult<SessionResponse>> CreateSession(CreateSessionRequest request)
     {
         var code = GenerateCode();
-
         var session = new Session
         {
             Code = code,
@@ -31,9 +37,7 @@ public class SessionsController : ControllerBase
         _db.Sessions.Add(session);
         await _db.SaveChangesAsync();
 
-        // Create round settings
         for (int i = 1; i <= request.TotalRounds; i++)
-        {
             _db.RoundSettings.Add(new RoundSetting
             {
                 SessionId = session.Id,
@@ -41,7 +45,6 @@ public class SessionsController : ControllerBase
                 DurationMinutes = request.DefaultRoundDuration,
                 Name = $"Раунд {i}"
             });
-        }
         await _db.SaveChangesAsync();
 
         var created = await GetSessionWithIncludes(session.Code);
@@ -57,6 +60,18 @@ public class SessionsController : ControllerBase
         return Ok(MapToResponse(session));
     }
 
+    // DELETE /api/sessions/{code}
+    [HttpDelete("{code}")]
+    public async Task<ActionResult> DeleteSession(string code)
+    {
+        var session = await _db.Sessions.FirstOrDefaultAsync(s => s.Code == code);
+        if (session == null) return NotFound(new { message = "Сесію не знайдено" });
+        _db.Sessions.Remove(session);
+        await _db.SaveChangesAsync();
+        await _hub.Clients.Group(code).SendAsync("SessionDeleted", new { code });
+        return NoContent();
+    }
+
     // GET /api/sessions/{code}/state
     [HttpGet("{code}/state")]
     public async Task<ActionResult<SessionStateResponse>> GetSessionState(string code)
@@ -64,19 +79,21 @@ public class SessionsController : ControllerBase
         var session = await _db.Sessions
             .Include(s => s.Teams).ThenInclude(t => t.Members)
             .FirstOrDefaultAsync(s => s.Code == code);
-
         if (session == null) return NotFound(new { message = "Сесію не знайдено" });
 
         long? remaining = null;
-        if (session.RoundEndTime.HasValue && session.Status == "ACTIVE")
-        {
+        if (session.Status == "ACTIVE" && session.RoundEndTime.HasValue)
             remaining = Math.Max(0, (long)(session.RoundEndTime.Value - DateTime.UtcNow).TotalSeconds);
-        }
+        else if (session.Status == "PAUSED" && session.RoundEndTime.HasValue && session.PausedAt.HasValue)
+            // Return the frozen value: how much was left at the moment of pause
+            remaining = Math.Max(0, (long)(session.RoundEndTime.Value - session.PausedAt.Value).TotalSeconds);
 
         return Ok(new SessionStateResponse
         {
-            Code = session.Code, Status = session.Status,
-            CurrentRound = session.CurrentRound, RoundEndTime = session.RoundEndTime,
+            Code = session.Code,
+            Status = session.Status,
+            CurrentRound = session.CurrentRound,
+            RoundEndTime = session.RoundEndTime,
             RemainingSeconds = remaining,
             Teams = session.Teams.Select(MapTeam).ToList()
         });
@@ -88,16 +105,12 @@ public class SessionsController : ControllerBase
     {
         var session = await _db.Sessions.FirstOrDefaultAsync(s => s.Code == code);
         if (session == null) return NotFound();
-
         var valid = new[] { "WAITING", "ACTIVE", "PAUSED", "FINISHED" };
-        if (!valid.Contains(request.Status))
-            return BadRequest(new { message = "Невалідний статус" });
-
+        if (!valid.Contains(request.Status)) return BadRequest(new { message = "Невалідний статус" });
         session.Status = request.Status;
-        if (request.Status == "FINISHED")
-            session.GameEndTime = DateTime.UtcNow;
-
+        if (request.Status == "FINISHED") session.GameEndTime = DateTime.UtcNow;
         await _db.SaveChangesAsync();
+        await _hub.Clients.Group(code).SendAsync("SessionUpdated", new { status = session.Status });
         return Ok(new { status = session.Status });
     }
 
@@ -105,25 +118,21 @@ public class SessionsController : ControllerBase
     [HttpPost("{code}/rounds/start")]
     public async Task<ActionResult> StartRound(string code)
     {
-        var session = await _db.Sessions
-            .Include(s => s.RoundSettings)
+        var session = await _db.Sessions.Include(s => s.RoundSettings)
             .FirstOrDefaultAsync(s => s.Code == code);
         if (session == null) return NotFound();
 
-        var roundSetting = session.RoundSettings
-            .FirstOrDefault(r => r.RoundNumber == session.CurrentRound);
-        var duration = roundSetting?.DurationMinutes ?? 15;
+        var duration = session.RoundSettings
+            .FirstOrDefault(r => r.RoundNumber == session.CurrentRound)?.DurationMinutes ?? 15;
 
         session.Status = "ACTIVE";
         session.RoundEndTime = DateTime.UtcNow.AddMinutes(duration);
+        session.PausedAt = null;
         await _db.SaveChangesAsync();
 
-        return Ok(new
-        {
-            round = session.CurrentRound,
-            roundEndTime = session.RoundEndTime,
-            durationMinutes = duration
-        });
+        var payload = new { round = session.CurrentRound, roundEndTime = session.RoundEndTime, durationMinutes = duration };
+        await _hub.Clients.Group(code).SendAsync("RoundStarted", payload);
+        return Ok(payload);
     }
 
     // POST /api/sessions/{code}/rounds/pause
@@ -132,26 +141,53 @@ public class SessionsController : ControllerBase
     {
         var session = await _db.Sessions.FirstOrDefaultAsync(s => s.Code == code);
         if (session == null) return NotFound();
+        if (session.Status != "ACTIVE") return BadRequest(new { message = "Раунд не активний" });
 
+        session.PausedAt = DateTime.UtcNow;
         session.Status = "PAUSED";
         await _db.SaveChangesAsync();
-        return Ok(new { status = "PAUSED" });
+
+        var frozen = Math.Max(0, (long)(session.RoundEndTime!.Value - session.PausedAt.Value).TotalSeconds);
+        await _hub.Clients.Group(code).SendAsync("RoundPaused", new { status = "PAUSED", remainingSeconds = frozen });
+        return Ok(new { status = "PAUSED", remainingSeconds = frozen });
+    }
+
+    // POST /api/sessions/{code}/rounds/resume
+    [HttpPost("{code}/rounds/resume")]
+    public async Task<ActionResult> ResumeRound(string code)
+    {
+        var session = await _db.Sessions.FirstOrDefaultAsync(s => s.Code == code);
+        if (session == null) return NotFound();
+        if (session.Status != "PAUSED") return BadRequest(new { message = "Сесія не на паузі" });
+
+        if (session.PausedAt.HasValue && session.RoundEndTime.HasValue)
+        {
+            // Shift deadline forward by the duration of the pause
+            var pausedFor = DateTime.UtcNow - session.PausedAt.Value;
+            session.RoundEndTime = session.RoundEndTime.Value + pausedFor;
+        }
+
+        session.Status = "ACTIVE";
+        session.PausedAt = null;
+        await _db.SaveChangesAsync();
+
+        await _hub.Clients.Group(code).SendAsync("RoundResumed", new { status = "ACTIVE", roundEndTime = session.RoundEndTime });
+        return Ok(new { status = "ACTIVE", roundEndTime = session.RoundEndTime });
     }
 
     // POST /api/sessions/{code}/rounds/next
     [HttpPost("{code}/rounds/next")]
     public async Task<ActionResult> NextRound(string code)
     {
-        var session = await _db.Sessions
-            .Include(s => s.RoundSettings)
+        var session = await _db.Sessions.Include(s => s.RoundSettings)
             .FirstOrDefaultAsync(s => s.Code == code);
         if (session == null) return NotFound();
-
         session.CurrentRound++;
         session.Status = "WAITING";
         session.RoundEndTime = null;
+        session.PausedAt = null;
         await _db.SaveChangesAsync();
-
+        await _hub.Clients.Group(code).SendAsync("SessionUpdated", new { status = "WAITING", currentRound = session.CurrentRound });
         return Ok(new { currentRound = session.CurrentRound });
     }
 
@@ -161,17 +197,13 @@ public class SessionsController : ControllerBase
     {
         var session = await _db.Sessions.FirstOrDefaultAsync(s => s.Code == code);
         if (session == null) return NotFound();
-
         if (session.RoundEndTime.HasValue)
         {
             session.RoundEndTime = session.RoundEndTime.Value.AddMinutes(request.Minutes);
             await _db.SaveChangesAsync();
         }
-
         return Ok(new { roundEndTime = session.RoundEndTime });
     }
-
-    // --- Helpers ---
 
     private async Task<Session?> GetSessionWithIncludes(string code) =>
         await _db.Sessions
@@ -188,9 +220,14 @@ public class SessionsController : ControllerBase
 
     private static SessionResponse MapToResponse(Session s) => new()
     {
-        Id = s.Id, Code = s.Code, Name = s.Name, Status = s.Status,
-        CurrentRound = s.CurrentRound, RoundEndTime = s.RoundEndTime,
-        GameEndTime = s.GameEndTime, CreatedAt = s.CreatedAt,
+        Id = s.Id,
+        Code = s.Code,
+        Name = s.Name,
+        Status = s.Status,
+        CurrentRound = s.CurrentRound,
+        RoundEndTime = s.RoundEndTime,
+        GameEndTime = s.GameEndTime,
+        CreatedAt = s.CreatedAt,
         TeamCount = s.Teams.Count,
         RoundSettings = s.RoundSettings.OrderBy(r => r.RoundNumber).Select(r =>
             new RoundSettingResponse { Id = r.Id, RoundNumber = r.RoundNumber, DurationMinutes = r.DurationMinutes, Name = r.Name }
@@ -199,8 +236,11 @@ public class SessionsController : ControllerBase
 
     private static TeamResponse MapTeam(Team t) => new()
     {
-        Id = t.Id, Name = t.Name, LifeTokens = t.LifeTokens,
-        SelectedTrack = t.SelectedTrack, CreatedAt = t.CreatedAt,
+        Id = t.Id,
+        Name = t.Name,
+        LifeTokens = t.LifeTokens,
+        SelectedTrack = t.SelectedTrack,
+        CreatedAt = t.CreatedAt,
         Members = t.Members.Select(m => new TeamMemberResponse { Id = m.Id, Name = m.Name, Role = m.Role }).ToList()
     };
 }
