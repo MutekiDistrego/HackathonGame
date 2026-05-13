@@ -15,6 +15,7 @@ const sessionApi = {
   // Rounds
   startRound: (code) => api.post(`/sessions/${code}/rounds/start`),
   pauseRound: (code) => api.post(`/sessions/${code}/rounds/pause`),
+  resumeRound: (code) => api.post(`/sessions/${code}/rounds/resume`),
   nextRound: (code) => api.post(`/sessions/${code}/rounds/next`),
   adjustTime: (code, minutes) => api.put(`/sessions/${code}/rounds/time`, { minutes }),
 

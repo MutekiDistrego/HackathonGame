@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import sessionApi from '../services/sessionApi'
 
 function AdminPanelPage() {
   const { code } = useParams()
+  const navigate = useNavigate()
   const [session, setSession] = useState(null)
   const [state, setState] = useState(null)
   const [teams, setTeams] = useState([])
@@ -67,6 +68,16 @@ function AdminPanelPage() {
     }
   }
 
+  const handleResumeRound = async () => {
+    try {
+      await sessionApi.resumeRound(code)
+      showMsg('Раунд відновлено')
+      await loadState()
+    } catch (err) {
+      showMsg('Помилка: ' + (err.response?.data?.message || 'не вдалося'))
+    }
+  }
+
   const handleNextRound = async () => {
     try {
       const res = await sessionApi.nextRound(code)
@@ -94,6 +105,16 @@ function AdminPanelPage() {
       await loadState()
     } catch {
       showMsg('Помилка зміни статусу')
+    }
+  }
+
+  const handleDeleteSession = async () => {
+    if (!confirm(`Видалити сесію "${session?.name}" (${code})? Це незворотна дія.`)) return
+    try {
+      await sessionApi.deleteSession(code)
+      navigate('/')
+    } catch {
+      showMsg('Помилка видалення сесії')
     }
   }
 
@@ -166,6 +187,13 @@ function AdminPanelPage() {
               className="btn-neon-pink disabled:opacity-40 disabled:cursor-not-allowed"
             >
               Пауза
+            </button>
+            <button
+              onClick={handleResumeRound}
+              disabled={state?.status !== 'PAUSED'}
+              className="btn-neon disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Продовжити
             </button>
             <button onClick={handleNextRound} className="btn-neon">
               Наступний раунд
@@ -306,7 +334,7 @@ function AdminPanelPage() {
 
         {/* Round Settings */}
         {session?.roundSettings?.length > 0 && (
-          <div className="card-cyber">
+          <div className="card-cyber mb-6">
             <h2 className="font-cyber text-lg text-neon-pink mb-4">Налаштування раундів</h2>
             <div className="space-y-2">
               {session.roundSettings.map(r => (
@@ -325,6 +353,17 @@ function AdminPanelPage() {
             </div>
           </div>
         )}
+
+        {/* Danger Zone */}
+        <div className="card-cyber border-red-900/50">
+          <h2 className="font-cyber text-lg text-red-400 mb-4">Небезпечна зона</h2>
+          <button
+            onClick={handleDeleteSession}
+            className="px-4 py-2 rounded-lg text-sm font-medium border border-red-700 text-red-400 hover:bg-red-900/30 transition-all"
+          >
+            Видалити сесію
+          </button>
+        </div>
       </div>
     </div>
   )
