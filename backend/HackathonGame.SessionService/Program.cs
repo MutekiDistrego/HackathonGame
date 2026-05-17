@@ -15,6 +15,15 @@ builder.Services.AddSignalR();
 // Background timer service
 builder.Services.AddHostedService<TimerBackgroundService>();
 
+// ── НОВЕ: HTTP-клієнт до ML-сервісу ─────────────────────────
+builder.Services.AddHttpClient("ml", c =>
+{
+    c.BaseAddress = new Uri(
+        builder.Configuration["MlService:BaseUrl"] ?? "http://localhost:8084/");
+    c.Timeout = TimeSpan.FromSeconds(3); // не блокуємо основний flow
+});
+builder.Services.AddScoped<MlRecommendationService>();
+
 // Controllers
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

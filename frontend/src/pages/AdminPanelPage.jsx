@@ -2,6 +2,142 @@ import { useState, useEffect } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import sessionApi from '../services/sessionApi'
 
+// ── ML Recommendation Widget ──────────────────────────────────────────────────
+function MlRecommendation({ teams, currentRound, roundSettings, code }) {
+  const [rec, setRec] = useState(null)           // { recommendedMinutes, confidence, note }
+  const [loadingRec, setLoadingRec] = useState(false)
+  const [recTrack, setRecTrack] = useState('A')  // user picks which track to predict for
+  const [applied, setApplied] = useState(false)
+
+  // auto-detect majority track from teams list
+  useEffect(() => {
+    if (!teams?.length) return
+    const counts = {}
+    teams.forEach(t => { if (t.selectedTrack) counts[t.selectedTrack] = (counts[t.selectedTrack] || 0) + 1 })
+    const majority = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0]
+    if (majority) setRecTrack(majority)
+  }, [teams])
+
+  const fetchRec = async () => {
+    setLoadingRec(true)
+    setApplied(false)
+    try {
+      const res = await sessionApi.getRecommendedDuration({
+        teams: teams.length || 1,
+        track: recTrack,
+        round: currentRound,
+      })
+      setRec(res.data)
+    } catch {
+      setRec({ recommendedMinutes: null, confidence: 0, note: 'error' })
+    } finally {
+      setLoadingRec(false)
+    }
+  }
+
+  const applyRec = async () => {
+    if (!rec?.recommendedMinutes) return
+    try {
+      await sessionApi.updateRound(code, currentRound, {
+        durationMinutes: rec.recommendedMinutes,
+      })
+      setApplied(true)
+      setTimeout(() => setApplied(false), 3000)
+    } catch {
+      // silent — the round update is best-effort
+    }
+  }
+
+  const confidencePct = Math.round((rec?.confidence || 0) * 100)
+  const confidenceColor =
+    confidencePct >= 80 ? 'text-green-400' :
+    confidencePct >= 55 ? 'text-yellow-400' :
+    'text-gray-500'
+
+  const noteLabel = {
+    synthetic:              'синтетичні дані',
+    real_data:              'реальні дані',
+    ml_unavailable_fallback:'ML недоступний — евристика',
+    error:                  'помилка запиту',
+  }[rec?.note] ?? rec?.note
+
+  return (
+    <div className="mt-4 p-4 rounded-lg border border-neon-cyan/20 bg-neon-cyan/5">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-sm text-neon-cyan font-medium">AI рекомендація для раунду {currentRound}</span>
+        <span className="text-xs text-gray-600">ML-сервіс</span>
+      </div>
+
+      {/* Track picker */}
+      <div className="flex items-center gap-3 mb-3">
+        <span className="text-xs text-gray-400">Трек:</span>
+        {['A', 'B', 'C'].map(t => (
+          <button
+            key={t}
+            onClick={() => { setRecTrack(t); setRec(null) }}
+            className={`w-7 h-7 rounded text-xs font-bold transition-all ${
+              recTrack === t
+                ? 'bg-neon-cyan text-cyber-darker'
+                : 'border border-cyber-border text-gray-500 hover:border-neon-cyan hover:text-neon-cyan'
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+        <span className="text-xs text-gray-600">{teams.length} команд</span>
+      </div>
+
+      {/* Result */}
+      {rec && rec.recommendedMinutes !== null ? (
+        <div className="flex items-center gap-4 mb-3">
+          <div>
+            <span className="font-cyber text-3xl text-neon-cyan">{rec.recommendedMinutes}</span>
+            <span className="text-gray-400 ml-1 text-sm">хв</span>
+          </div>
+          <div className="flex-1">
+            {/* Confidence bar */}
+            <div className="flex items-center gap-2 mb-1">
+              <div className="flex-1 h-1.5 rounded-full bg-cyber-border overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-neon-cyan transition-all duration-700"
+                  style={{ width: `${confidencePct}%` }}
+                />
+              </div>
+              <span className={`text-xs font-medium ${confidenceColor}`}>{confidencePct}%</span>
+            </div>
+            <p className="text-xs text-gray-600">{noteLabel}</p>
+          </div>
+          <button
+            onClick={applyRec}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+              applied
+                ? 'border-green-500 text-green-400 bg-green-500/10'
+                : 'border-neon-cyan/50 text-neon-cyan hover:bg-neon-cyan/10'
+            }`}
+          >
+            {applied ? '✓ Застосовано' : 'Застосувати'}
+          </button>
+        </div>
+      ) : rec?.recommendedMinutes === null ? (
+        <p className="text-xs text-red-400 mb-3">Не вдалося отримати рекомендацію</p>
+      ) : null}
+
+      <button
+        onClick={fetchRec}
+        disabled={loadingRec}
+        className="text-xs px-3 py-1.5 rounded border border-neon-cyan/40 text-neon-cyan hover:bg-neon-cyan/10 transition-all disabled:opacity-50"
+      >
+        {loadingRec
+          ? '⟳ Завантаження...'
+          : rec
+          ? '⟳ Оновити'
+          : '✦ Отримати рекомендацію'}
+      </button>
+    </div>
+  )
+}
+
+// ── Main AdminPanelPage ───────────────────────────────────────────────────────
 function AdminPanelPage() {
   const { code } = useParams()
   const navigate = useNavigate()
@@ -140,6 +276,7 @@ function AdminPanelPage() {
   return (
     <div className="min-h-screen p-6">
       <div className="max-w-4xl mx-auto">
+
         {/* Header */}
         <div className="flex justify-between items-center mb-2">
           <h1 className="font-cyber text-3xl text-neon-cyan">Адмін панель</h1>
@@ -205,11 +342,11 @@ function AdminPanelPage() {
         <div className="card-cyber mb-6">
           <h2 className="font-cyber text-lg text-neon-pink mb-4">Таймер</h2>
           <div className="flex gap-3 flex-wrap">
-            <button onClick={() => handleAdjustTime(1)} className="btn-neon text-sm">+1 хв</button>
-            <button onClick={() => handleAdjustTime(5)} className="btn-neon text-sm">+5 хв</button>
-            <button onClick={() => handleAdjustTime(10)} className="btn-neon text-sm">+10 хв</button>
-            <button onClick={() => handleAdjustTime(-1)} className="btn-neon-pink text-sm">-1 хв</button>
-            <button onClick={() => handleAdjustTime(-5)} className="btn-neon-pink text-sm">-5 хв</button>
+            <button onClick={() => handleAdjustTime(1)}   className="btn-neon text-sm">+1 хв</button>
+            <button onClick={() => handleAdjustTime(5)}   className="btn-neon text-sm">+5 хв</button>
+            <button onClick={() => handleAdjustTime(10)}  className="btn-neon text-sm">+10 хв</button>
+            <button onClick={() => handleAdjustTime(-1)}  className="btn-neon-pink text-sm">-1 хв</button>
+            <button onClick={() => handleAdjustTime(-5)}  className="btn-neon-pink text-sm">-5 хв</button>
           </div>
         </div>
 
@@ -332,7 +469,7 @@ function AdminPanelPage() {
           )}
         </div>
 
-        {/* Round Settings */}
+        {/* Round Settings + ML Recommendation */}
         {session?.roundSettings?.length > 0 && (
           <div className="card-cyber mb-6">
             <h2 className="font-cyber text-lg text-neon-pink mb-4">Налаштування раундів</h2>
@@ -351,6 +488,14 @@ function AdminPanelPage() {
                 </div>
               ))}
             </div>
+
+            {/* ── ML Recommendation widget ── */}
+            <MlRecommendation
+              teams={teams}
+              currentRound={state?.currentRound || 1}
+              roundSettings={session.roundSettings}
+              code={code}
+            />
           </div>
         )}
 
@@ -364,6 +509,7 @@ function AdminPanelPage() {
             Видалити сесію
           </button>
         </div>
+
       </div>
     </div>
   )

@@ -12,6 +12,9 @@ public class SessionDbContext : DbContext
     public DbSet<TeamMember> TeamMembers => Set<TeamMember>();
     public DbSet<RoundSetting> RoundSettings => Set<RoundSetting>();
 
+    // ── НОВЕ: таблиця для ML-сервісу ────────────────────────
+    public DbSet<RoundHistory> RoundHistory => Set<RoundHistory>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
@@ -49,6 +52,25 @@ public class SessionDbContext : DbContext
                   .OnDelete(DeleteBehavior.Cascade);
 
             entity.Property(e => e.DurationMinutes).HasDefaultValue(15);
+        });
+
+        // ── НОВЕ: конфігурація RoundHistory ─────────────────
+        modelBuilder.Entity<RoundHistory>(entity =>
+        {
+            entity.HasOne(r => r.Session)
+                  .WithMany()
+                  .HasForeignKey(r => r.SessionId)
+                  .OnDelete(DeleteBehavior.Cascade);
+
+            entity.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
+
+            // Індекс для ML-запитів (round_number, team_count, track)
+            entity.HasIndex(e => new { e.RoundNumber, e.TeamCount, e.Track })
+                  .HasFilter("actual_duration_minutes IS NOT NULL")
+                  .HasDatabaseName("idx_round_history_ml");
+
+            entity.HasIndex(e => e.SessionId)
+                  .HasDatabaseName("idx_round_history_session");
         });
     }
 }

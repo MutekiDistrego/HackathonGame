@@ -1,6 +1,6 @@
 namespace HackathonGame.SessionService.DTOs;
 
-// --- Request DTOs ---
+//     Request DTOs
 
 public class CreateSessionRequest
 {
@@ -32,7 +32,7 @@ public class TeamMemberDto
     public string? Role { get; set; }
 }
 
-// --- Response DTOs ---
+//     Response DTOs
 
 public class SessionResponse
 {
@@ -81,4 +81,14 @@ public class RoundSettingResponse
     public int RoundNumber { get; set; }
     public int DurationMinutes { get; set; }
     public string? Name { get; set; }
+}
+
+//  відповідь від ML-сервісу
+public class DurationRecommendationResponse
+{
+    public int RecommendedMinutes { get; set; }
+    public double Confidence { get; set; }
+    public int NTrainingSamples { get; set; }
+    public string TrainedAt { get; set; } = string.Empty;
+    public string Note { get; set; } = string.Empty;
 }

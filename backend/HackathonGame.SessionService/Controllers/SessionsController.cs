@@ -5,6 +5,7 @@ using HackathonGame.SessionService.Data;
 using HackathonGame.SessionService.DTOs;
 using HackathonGame.SessionService.Hubs;
 using HackathonGame.SessionService.Models;
+using HackathonGame.SessionService.Services;
 
 namespace HackathonGame.SessionService.Controllers;
 
@@ -85,7 +86,6 @@ public class SessionsController : ControllerBase
         if (session.Status == "ACTIVE" && session.RoundEndTime.HasValue)
             remaining = Math.Max(0, (long)(session.RoundEndTime.Value - DateTime.UtcNow).TotalSeconds);
         else if (session.Status == "PAUSED" && session.RoundEndTime.HasValue && session.PausedAt.HasValue)
-            // Return the frozen value: how much was left at the moment of pause
             remaining = Math.Max(0, (long)(session.RoundEndTime.Value - session.PausedAt.Value).TotalSeconds);
 
         return Ok(new SessionStateResponse
@@ -118,7 +118,8 @@ public class SessionsController : ControllerBase
     [HttpPost("{code}/rounds/start")]
     public async Task<ActionResult> StartRound(string code)
     {
-        var session = await _db.Sessions.Include(s => s.RoundSettings)
+        var session = await _db.Sessions
+            .Include(s => s.RoundSettings)
             .FirstOrDefaultAsync(s => s.Code == code);
         if (session == null) return NotFound();
 
@@ -129,6 +130,9 @@ public class SessionsController : ControllerBase
         session.RoundEndTime = DateTime.UtcNow.AddMinutes(duration);
         session.PausedAt = null;
         await _db.SaveChangesAsync();
+
+        // ── НОВЕ: логуємо старт раунду в round_history ───────
+        await LogRoundStarted(session, duration);
 
         var payload = new { round = session.CurrentRound, roundEndTime = session.RoundEndTime, durationMinutes = duration };
         await _hub.Clients.Group(code).SendAsync("RoundStarted", payload);
@@ -162,7 +166,6 @@ public class SessionsController : ControllerBase
 
         if (session.PausedAt.HasValue && session.RoundEndTime.HasValue)
         {
-            // Shift deadline forward by the duration of the pause
             var pausedFor = DateTime.UtcNow - session.PausedAt.Value;
             session.RoundEndTime = session.RoundEndTime.Value + pausedFor;
         }
@@ -179,15 +182,22 @@ public class SessionsController : ControllerBase
     [HttpPost("{code}/rounds/next")]
     public async Task<ActionResult> NextRound(string code)
     {
-        var session = await _db.Sessions.Include(s => s.RoundSettings)
+        var session = await _db.Sessions
+            .Include(s => s.RoundSettings)
             .FirstOrDefaultAsync(s => s.Code == code);
         if (session == null) return NotFound();
+
+        // ── НОВЕ: логуємо завершення раунду перед переходом ──
+        await LogRoundEnded(session.Id, session.CurrentRound);
+
         session.CurrentRound++;
         session.Status = "WAITING";
         session.RoundEndTime = null;
         session.PausedAt = null;
         await _db.SaveChangesAsync();
-        await _hub.Clients.Group(code).SendAsync("SessionUpdated", new { status = "WAITING", currentRound = session.CurrentRound });
+
+        await _hub.Clients.Group(code).SendAsync("SessionUpdated",
+            new { status = "WAITING", currentRound = session.CurrentRound });
         return Ok(new { currentRound = session.CurrentRound });
     }
 
@@ -205,6 +215,97 @@ public class SessionsController : ControllerBase
         return Ok(new { roundEndTime = session.RoundEndTime });
     }
 
+    // ── НОВЕ: GET /api/sessions/recommend-duration ──────────
+    /// <summary>
+    /// Повертає рекомендовану тривалість раунду від ML-сервісу.
+    /// Приклад: GET /api/sessions/recommend-duration?teams=6&track=A&round=3
+    /// Якщо ML-сервіс недоступний — повертає вбудований fallback.
+    /// </summary>
+    [HttpGet("recommend-duration")]
+    public async Task<ActionResult<object>> RecommendDuration(
+        [FromQuery] int teams,
+        [FromQuery] string track,
+        [FromQuery] int round,
+        [FromServices] MlRecommendationService ml)
+    {
+        var trackUpper = track.ToUpperInvariant();
+        if (!new[] { "A", "B", "C" }.Contains(trackUpper))
+            return BadRequest(new { message = "track має бути A, B або C" });
+
+        var rec = await ml.GetRecommendationAsync(teams, trackUpper, round);
+
+        if (rec is null)
+        {
+            // Проста евристика без ML (використовується коли ML-сервіс down)
+            var fallback = 12 + (round - 1) + Math.Max(0, teams - 4);
+            return Ok(new
+            {
+                recommendedMinutes = fallback,
+                confidence = 0.0,
+                nTrainingSamples = 0,
+                trainedAt = (string?)null,
+                note = "ml_unavailable_fallback"
+            });
+        }
+
+        return Ok(rec);
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Викликається в кінці StartRound().
+    /// Записує новий рядок у round_history зі StartedAt.
+    /// </summary>
+    private async Task LogRoundStarted(Session session, int plannedMinutes)
+    {
+        // Визначаємо найпоширеніший трек серед команд сесії
+        var track = await _db.Teams
+            .Where(t => t.SessionId == session.Id && t.SelectedTrack != null)
+            .GroupBy(t => t.SelectedTrack)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key)
+            .FirstOrDefaultAsync();
+
+        var teamCount = await _db.Teams
+            .CountAsync(t => t.SessionId == session.Id);
+
+        _db.RoundHistory.Add(new RoundHistory
+        {
+            SessionId = session.Id,
+            RoundNumber = session.CurrentRound,
+            TeamCount = teamCount,
+            Track = track,
+            StartedAt = DateTime.UtcNow,
+            PlannedDurationMinutes = plannedMinutes,
+        });
+        await _db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Викликається на початку NextRound().
+    /// Заповнює EndedAt та ActualDurationMinutes для поточного раунду.
+    /// </summary>
+    private async Task LogRoundEnded(long sessionId, int roundNumber)
+    {
+        var history = await _db.RoundHistory
+            .Where(r => r.SessionId == sessionId
+                     && r.RoundNumber == roundNumber
+                     && r.EndedAt == null)
+            .OrderByDescending(r => r.StartedAt)
+            .FirstOrDefaultAsync();
+
+        if (history is not null)
+        {
+            history.EndedAt = DateTime.UtcNow;
+            history.ActualDurationMinutes =
+                (decimal)(history.EndedAt.Value - history.StartedAt).TotalMinutes;
+            await _db.SaveChangesAsync();
+        }
+    }
+
     private async Task<Session?> GetSessionWithIncludes(string code) =>
         await _db.Sessions
             .Include(s => s.Teams).ThenInclude(t => t.Members)
@@ -215,7 +316,8 @@ public class SessionsController : ControllerBase
     {
         const string chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
         var random = new Random();
-        return new string(Enumerable.Range(0, 6).Select(_ => chars[random.Next(chars.Length)]).ToArray());
+        return new string(Enumerable.Range(0, 6)
+            .Select(_ => chars[random.Next(chars.Length)]).ToArray());
     }
 
     private static SessionResponse MapToResponse(Session s) => new()
@@ -230,8 +332,13 @@ public class SessionsController : ControllerBase
         CreatedAt = s.CreatedAt,
         TeamCount = s.Teams.Count,
         RoundSettings = s.RoundSettings.OrderBy(r => r.RoundNumber).Select(r =>
-            new RoundSettingResponse { Id = r.Id, RoundNumber = r.RoundNumber, DurationMinutes = r.DurationMinutes, Name = r.Name }
-        ).ToList()
+            new RoundSettingResponse
+            {
+                Id = r.Id,
+                RoundNumber = r.RoundNumber,
+                DurationMinutes = r.DurationMinutes,
+                Name = r.Name
+            }).ToList()
     };
 
     private static TeamResponse MapTeam(Team t) => new()
@@ -241,6 +348,7 @@ public class SessionsController : ControllerBase
         LifeTokens = t.LifeTokens,
         SelectedTrack = t.SelectedTrack,
         CreatedAt = t.CreatedAt,
-        Members = t.Members.Select(m => new TeamMemberResponse { Id = m.Id, Name = m.Name, Role = m.Role }).ToList()
+        Members = t.Members.Select(m =>
+            new TeamMemberResponse { Id = m.Id, Name = m.Name, Role = m.Role }).ToList()
     };
 }

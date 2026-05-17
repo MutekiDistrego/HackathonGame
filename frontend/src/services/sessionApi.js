@@ -18,14 +18,26 @@ const sessionApi = {
   resumeRound: (code) => api.post(`/sessions/${code}/rounds/resume`),
   nextRound: (code) => api.post(`/sessions/${code}/rounds/next`),
   adjustTime: (code, minutes) => api.put(`/sessions/${code}/rounds/time`, { minutes }),
+  updateRound: (code, roundNumber, data) => api.put(`/sessions/${code}/rounds/${roundNumber}`, data),
+
+  // ML recommendation
+  // GET /api/sessions/recommend-duration?teams=6&track=A&round=3
+  getRecommendedDuration: ({ teams, track, round }) =>
+    api.get('/sessions/recommend-duration', { params: { teams, track, round } }),
 
   // Teams
   registerTeam: (code, data) => api.post(`/sessions/${code}/teams`, data),
   getTeams: (code) => api.get(`/sessions/${code}/teams`),
   getTeam: (code, teamId) => api.get(`/sessions/${code}/teams/${teamId}`),
   updateTeam: (code, teamId, data) => api.put(`/sessions/${code}/teams/${teamId}`, data),
-  selectTrack: (code, teamId, track) => api.put(`/sessions/${code}/teams/${teamId}/track`, JSON.stringify(track), { headers: { 'Content-Type': 'application/json' } }),
-  updateTokens: (code, teamId, tokens) => api.put(`/sessions/${code}/teams/${teamId}/tokens`, JSON.stringify(tokens), { headers: { 'Content-Type': 'application/json' } }),
+  selectTrack: (code, teamId, track) =>
+    api.put(`/sessions/${code}/teams/${teamId}/track`, JSON.stringify(track), {
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  updateTokens: (code, teamId, tokens) =>
+    api.put(`/sessions/${code}/teams/${teamId}/tokens`, JSON.stringify(tokens), {
+      headers: { 'Content-Type': 'application/json' },
+    }),
   deleteTeam: (code, teamId) => api.delete(`/sessions/${code}/teams/${teamId}`),
 }
 

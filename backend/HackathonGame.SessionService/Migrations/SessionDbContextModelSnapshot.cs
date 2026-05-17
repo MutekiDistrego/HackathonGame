@@ -22,6 +22,66 @@ namespace HackathonGame.SessionService.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("HackathonGame.SessionService.Models.RoundHistory", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal?>("ActualDurationMinutes")
+                        .HasColumnType("numeric")
+                        .HasColumnName("actual_duration_minutes");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("NOW()");
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("ended_at");
+
+                    b.Property<int?>("PlannedDurationMinutes")
+                        .HasColumnType("integer")
+                        .HasColumnName("planned_duration_minutes");
+
+                    b.Property<int>("RoundNumber")
+                        .HasColumnType("integer")
+                        .HasColumnName("round_number");
+
+                    b.Property<long>("SessionId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("session_id");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at");
+
+                    b.Property<int>("TeamCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("team_count");
+
+                    b.Property<string>("Track")
+                        .HasMaxLength(1)
+                        .HasColumnType("character varying(1)")
+                        .HasColumnName("track");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SessionId")
+                        .HasDatabaseName("idx_round_history_session");
+
+                    b.HasIndex("RoundNumber", "TeamCount", "Track")
+                        .HasDatabaseName("idx_round_history_ml")
+                        .HasFilter("actual_duration_minutes IS NOT NULL");
+
+                    b.ToTable("round_history");
+                });
+
             modelBuilder.Entity("HackathonGame.SessionService.Models.RoundSetting", b =>
                 {
                     b.Property<long>("Id")
@@ -192,6 +252,17 @@ namespace HackathonGame.SessionService.Migrations
                     b.HasIndex("TeamId");
 
                     b.ToTable("team_members");
+                });
+
+            modelBuilder.Entity("HackathonGame.SessionService.Models.RoundHistory", b =>
+                {
+                    b.HasOne("HackathonGame.SessionService.Models.Session", "Session")
+                        .WithMany()
+                        .HasForeignKey("SessionId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Session");
                 });
 
             modelBuilder.Entity("HackathonGame.SessionService.Models.RoundSetting", b =>
