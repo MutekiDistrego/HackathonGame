@@ -251,6 +251,37 @@ public class SessionsController : ControllerBase
         return Ok(rec);
     }
 
+
+
+
+    [ApiController]
+    [Route("api/cards")]
+    public class CardsFeedbackController : ControllerBase
+    {
+        // Цей метод приймає запити від сервісу Оцінювання (P3)
+        [HttpPost("feedback")]
+        public IActionResult ReceiveFeedback([FromBody] CardFeedbackRequest request)
+        {
+            // TODO для Дениса: тут логіка обробки або збереження фідбеку
+            // наприклад, оновлення статусу картки в базі сесій
+
+            Console.WriteLine($"Отримано фідбек: {request.PointsAwarded} балів для команди {request.TeamId} (Картка: {request.CardId})");
+
+            return Ok(new { message = "Фідбек успішно прийнято сервісом сесій!" });
+        }
+    }
+
+    // DTO модель, яка має ТОЧНО співпадати з тією, що відправляє P3
+    public class CardFeedbackRequest
+    {
+        public string SessionId { get; set; }
+        public long TeamId { get; set; }
+        public string CardId { get; set; }
+        public int Round { get; set; }
+        public int PointsAwarded { get; set; }
+        public string Reason { get; set; }
+    }
+
     // ─────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────

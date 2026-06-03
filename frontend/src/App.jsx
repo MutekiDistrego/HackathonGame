@@ -6,9 +6,9 @@ import SessionDashboardPage from './pages/SessionDashboardPage'
 import AdminPanelPage from './pages/AdminPanelPage'
 
 const PROJECTS = [
-  { label: '🎮 Сесії', href: 'http://localhost:3001', port: 3001 },
-  { label: '🃏 Картки', href: 'http://localhost:3002', port: 3002 },
-  { label: '🏆 Бали & Форми', href: 'http://localhost:3003', port: 3003 },
+  { label: 'Сесії', href: 'http://localhost:3001', port: 3001 },
+  { label: 'Картки', href: 'http://localhost:3002', port: 3002 },
+  { label: 'Бали & Форми', href: 'http://localhost:3003', port: 3003 },
 ]
 
 function App() {

@@ -4,49 +4,48 @@ import * as signalR from '@microsoft/signalr'
 import sessionApi from '../services/sessionApi'
 
 const statusLabels = {
-  WAITING: { text: 'Очікування', cls: 'text-yellow-400 bg-yellow-400/20' },
-  ACTIVE:  { text: 'Активна',    cls: 'text-green-400 bg-green-400/20'  },
-  PAUSED:  { text: 'Пауза',      cls: 'text-orange-400 bg-orange-400/20'},
-  FINISHED:{ text: 'Завершена',  cls: 'text-gray-400 bg-gray-400/20'    },
+  WAITING:  { text: 'Очікування', cls: 'text-yellow-400 bg-yellow-400/20'  },
+  ACTIVE:   { text: 'Активна',    cls: 'text-green-400 bg-green-400/20'    },
+  PAUSED:   { text: 'Пауза',      cls: 'text-orange-400 bg-orange-400/20'  },
+  FINISHED: { text: 'Завершена',  cls: 'text-gray-400 bg-gray-400/20'      },
 }
 
 function SessionDashboardPage() {
   const { code } = useParams()
   const navigate = useNavigate()
-  const [session, setSession]               = useState(null)
-  const [state, setState]                   = useState(null)
-  const [teams, setTeams]                   = useState([])
-  const [loading, setLoading]               = useState(true)
-  const [error, setError]                   = useState('')
+  const [session, setSession]                   = useState(null)
+  const [state, setState]                       = useState(null)
+  const [teams, setTeams]                       = useState([])
+  const [loading, setLoading]                   = useState(true)
+  const [error, setError]                       = useState('')
   const [remainingSeconds, setRemainingSeconds] = useState(null)
-  const [connected, setConnected]           = useState(false)
-  const timerRef  = useRef(null)
-  const hubRef    = useRef(null)
-  const stateRef  = useRef(null)   // always up-to-date state for the interval closure
+  const [connected, setConnected]               = useState(false)
+  const timerRef   = useRef(null)
+  const hubRef     = useRef(null)
+  const stateRef   = useRef(null)
   const myTeamId   = localStorage.getItem('hackathon_teamId')
   const myTeamName = localStorage.getItem('hackathon_teamName')
 
   useEffect(() => { localStorage.setItem('hackathon_session', code) }, [code])
-
-  // ── initial load ──────────────────────────────────────────────────────────
   useEffect(() => { loadData() }, [code])
-
-  // ── keep stateRef in sync ─────────────────────────────────────────────────
   useEffect(() => { stateRef.current = state }, [state])
 
-  // ── local countdown — restarts whenever roundEndTime or status changes ────
+  // Local countdown
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current)
 
     if (state?.status === 'ACTIVE' && state.roundEndTime) {
       const tick = () => {
-        const diff = Math.max(0, Math.floor((new Date(state.roundEndTime).getTime() - Date.now()) / 1000))
+        const diff = Math.max(
+          0,
+          Math.floor((new Date(state.roundEndTime).getTime() - Date.now()) / 1000)
+        )
         setRemainingSeconds(diff)
       }
       tick()
       timerRef.current = setInterval(tick, 1000)
     } else if (state?.status === 'PAUSED') {
-      // Timer frozen — remainingSeconds already set by RoundPaused event or state load
+      // frozen — value already set by RoundPaused event or state load
     } else {
       setRemainingSeconds(null)
     }
@@ -54,7 +53,7 @@ function SessionDashboardPage() {
     return () => { if (timerRef.current) clearInterval(timerRef.current) }
   }, [state?.roundEndTime, state?.status])
 
-  // ── SignalR ───────────────────────────────────────────────────────────────
+  // SignalR
   useEffect(() => {
     const connection = new signalR.HubConnectionBuilder()
       .withUrl('/hubs/session')
@@ -67,35 +66,27 @@ function SessionDashboardPage() {
     connection.on('SessionUpdated', (data) => {
       setState(prev => prev ? { ...prev, ...data } : data)
     })
-
     connection.on('RoundStarted', (data) => {
       setState(prev => prev
         ? { ...prev, status: 'ACTIVE', currentRound: data.round, roundEndTime: data.roundEndTime }
         : null)
-      setRemainingSeconds(null) // will be recalculated by the useEffect above
+      setRemainingSeconds(null)
     })
-
-    // Pause — freeze the timer at the value sent by the server
     connection.on('RoundPaused', (data) => {
       setState(prev => prev ? { ...prev, status: 'PAUSED' } : null)
       setRemainingSeconds(data.remainingSeconds)
       if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
     })
-
-    // Resume — update roundEndTime so the countdown useEffect restarts correctly
     connection.on('RoundResumed', (data) => {
       setState(prev => prev
         ? { ...prev, status: 'ACTIVE', roundEndTime: data.roundEndTime }
         : null)
     })
-
     connection.on('RoundEnded', () => {
       setState(prev => prev ? { ...prev, status: 'WAITING', roundEndTime: null } : null)
       setRemainingSeconds(null)
     })
-
     connection.on('TeamRegistered', () => { loadState() })
-
     connection.on('SessionDeleted', () => { navigate('/') })
 
     connection.start()
@@ -118,7 +109,6 @@ function SessionDashboardPage() {
     }
   }, [code])
 
-  // ── helpers ───────────────────────────────────────────────────────────────
   const loadData = async () => {
     setLoading(true)
     try {
@@ -141,7 +131,6 @@ function SessionDashboardPage() {
       const res = await sessionApi.getSessionState(code)
       setState(res.data)
       if (res.data.teams) setTeams(res.data.teams)
-      // If paused, set frozen value from server
       if (res.data.status === 'PAUSED' && res.data.remainingSeconds != null)
         setRemainingSeconds(res.data.remainingSeconds)
     } catch {}
@@ -154,7 +143,6 @@ function SessionDashboardPage() {
     return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
   }
 
-  // ── render ────────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="min-h-screen flex items-center justify-center">
       <div className="text-center">
@@ -213,21 +201,29 @@ function SessionDashboardPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <a href={`http://localhost:3002/randomizer?session=${code}&team=${myTeamId}`}
-                className="px-4 py-2 rounded-lg text-sm border border-neon-pink/50 text-neon-pink hover:bg-neon-pink/10 transition-all">
-                🃏 Тягнути картку
+              <a
+                href={`http://localhost:3002/randomizer?session=${code}&team=${myTeamId}`}
+                className="px-4 py-2 rounded-lg text-sm border border-neon-pink/50 text-neon-pink hover:bg-neon-pink/10 transition-all"
+              >
+                Тягнути картку
               </a>
-              <a href={`http://localhost:3003/forms?session=${code}&team=${myTeamId}`}
-                className="px-4 py-2 rounded-lg text-sm border border-neon-cyan/50 text-neon-cyan hover:bg-neon-cyan/10 transition-all">
-                📝 Заповнити форму
+              <a
+                href={`http://localhost:3003/forms?session=${code}&team=${myTeamId}`}
+                className="px-4 py-2 rounded-lg text-sm border border-neon-cyan/50 text-neon-cyan hover:bg-neon-cyan/10 transition-all"
+              >
+                Заповнити форму
               </a>
-              <a href={`http://localhost:3003/team/${code}/${myTeamId}`}
-                className="px-4 py-2 rounded-lg text-sm border border-neon-green/50 text-neon-green hover:bg-neon-green/10 transition-all">
-                🏆 Мої бали
+              <a
+                href={`http://localhost:3003/team/${code}/${myTeamId}`}
+                className="px-4 py-2 rounded-lg text-sm border border-neon-green/50 text-neon-green hover:bg-neon-green/10 transition-all"
+              >
+                Мої бали
               </a>
-              <a href={`http://localhost:3003/?session=${code}`}
-                className="px-4 py-2 rounded-lg text-sm border border-yellow-400/50 text-yellow-400 hover:bg-yellow-400/10 transition-all">
-                📊 Лідерборд
+              <a
+                href={`http://localhost:3003/?session=${code}`}
+                className="px-4 py-2 rounded-lg text-sm border border-yellow-400/50 text-yellow-400 hover:bg-yellow-400/10 transition-all"
+              >
+                Лідерборд
               </a>
             </div>
           </div>
@@ -285,23 +281,32 @@ function SessionDashboardPage() {
                 const isMyTeam = String(team.id) === String(myTeamId)
                 return (
                   <div key={team.id} className={`p-4 rounded-lg border transition-colors ${
-                    isMyTeam ? 'border-neon-cyan/60 bg-neon-cyan/5' : 'border-cyber-border hover:border-neon-cyan/50'
+                    isMyTeam
+                      ? 'border-neon-cyan/60 bg-neon-cyan/5'
+                      : 'border-cyber-border hover:border-neon-cyan/50'
                   }`}>
                     <div className="flex justify-between items-start mb-2">
                       <div className="flex items-center gap-2">
                         <h3 className="font-cyber text-lg text-white">{team.name}</h3>
                         {isMyTeam && (
-                          <span className="text-[10px] px-1.5 py-0.5 bg-neon-cyan/20 text-neon-cyan rounded border border-neon-cyan/40">МОЯ</span>
+                          <span className="text-[10px] px-1.5 py-0.5 bg-neon-cyan/20 text-neon-cyan rounded border border-neon-cyan/40">
+                            МОЯ
+                          </span>
                         )}
                       </div>
                       <div className="flex items-center gap-1">
                         {Array.from({ length: 3 }).map((_, i) => (
-                          <span key={i} className={`w-3 h-3 rounded-full ${i < team.lifeTokens ? 'bg-red-400' : 'bg-gray-700'}`} />
+                          <span
+                            key={i}
+                            className={`w-3 h-3 rounded-full ${i < team.lifeTokens ? 'bg-red-400' : 'bg-gray-700'}`}
+                          />
                         ))}
                       </div>
                     </div>
                     <p className="text-xs text-gray-500 mb-2">ID: {team.id}</p>
-                    {team.selectedTrack && <p className="text-xs text-neon-cyan mb-2">Трек: {team.selectedTrack}</p>}
+                    {team.selectedTrack && (
+                      <p className="text-xs text-neon-cyan mb-2">Трек: {team.selectedTrack}</p>
+                    )}
                     {team.members?.length > 0 && (
                       <div className="flex flex-wrap gap-2 mt-2">
                         {team.members.map(m => (

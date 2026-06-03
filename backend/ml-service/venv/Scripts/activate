@@ -35,7 +35,7 @@ deactivate () {
 # unset irrelevant variables
 deactivate nondestructive
 
-VIRTUAL_ENV="C:\Users\dmele\Desktop\HackathonGame-main\project1-sessions\ml-service\venv"
+VIRTUAL_ENV="C:\Users\dmele\Desktop\HackathonGame-main\project1-sessions\backend\ml-service\venv"
 export VIRTUAL_ENV
 
 _OLD_VIRTUAL_PATH="$PATH"
